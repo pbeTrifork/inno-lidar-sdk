@@ -23,6 +23,7 @@
  * code.
  */
 
+#include <atomic>
 #if defined(__MINGW64__) || !defined(_WIN32)
 #include <getopt.h>
 #include <unistd.h>
@@ -46,342 +47,406 @@
 #include <stdio.h>
 #endif
 
+#include <csignal>
+
+namespace
+{
+	volatile std::atomic<bool> stopped = false;
+}
+
+void signalHandler(int signal)
+{
+	stopped = true;
+}
+
 static size_t kmaxPointNumberOneFrame = 500000;
-static const double kUsInSecond = 1000000.0;
-static const double k10UsInSecond = 100000.0;
-struct LidarOption {
-  std::string lidar_ip = "172.168.1.10";
-  uint16_t lidar_port = 8010;
-  uint16_t lidar_udp_port = 8010;
+constexpr double kUsInSecond = 1000000.0;
+constexpr double k10UsInSecond = 100000.0;
+
+struct LidarOption
+{
+	std::string lidar_ip = "172.168.1.10";
+	uint16_t lidar_port = 8010;
+	uint16_t lidar_udp_port = 8010;
 };
 
-struct PcdPoint {
-  float x;
-  float y;
-  float z;
-  uint16_t reflectivity;
-  uint16_t facet;
-  uint16_t is_2nd_return;
-  uint16_t multi_return;
-  uint16_t confid_level;
-  double timestamp;
-  uint16_t scanline;
-  uint16_t scan_idx;
-  uint32_t frame_id;
+struct PcdPoint
+{
+	float x;
+	float y;
+	float z;
+	uint16_t reflectivity;
+	uint16_t facet;
+	uint16_t is_2nd_return;
+	uint16_t multi_return;
+	uint16_t confid_level;
+	double timestamp;
+	uint16_t scanline;
+	uint16_t scan_idx;
+	uint32_t frame_id;
 };
 
-class CallbackProcessor {
-  ///
-  /// Print the received package information
-  ///
- public:
-  explicit CallbackProcessor();
+class CallbackProcessor
+{
+	///
+	/// Print the received package information
+	///
+public:
+	explicit CallbackProcessor();
 
-  void set_done() { done_ = true; }
-  bool is_done() { return done_; }
+	void set_done()
+	{
+		done_ = true;
+	}
 
-  /*@param context Callback context passed in inno_lidar_set_callbacks().
-   * @param from_remote > 0 means the message is from remote source
-   * @param level Severity of message.
-   * @param code Error code.
-   * @param error_message Error message.
-   * @return void.
-   */
-  void process_message(const enum InnoMessageLevel level, const enum InnoMessageCode code, const char *error_message);
+	[[nodiscard]] bool is_done() const
+	{
+		return done_;
+	}
 
-  /*
-   * @param context Callback context passed in inno_lidar_set_callbacks().
-   * @param data Pointer to InnoDataPacket
-   * @return 0
-   */
-  int process_data(int handler, const InnoDataPacket &pkt);
+	/*@param context Callback context passed in inno_lidar_set_callbacks().
+	 * @param from_remote > 0 means the message is from remote source
+	 * @param level Severity of message.
+	 * @param code Error code.
+	 * @param error_message Error message.
+	 * @return void.
+	 */
+	void process_message(InnoMessageLevel level, InnoMessageCode code, const char* error_message);
 
-  /*
-   * @param context Callback context passed in inno_lidar_set_callbacks().
-   * @param status Pointer to InnoDataPacket
-   * @return 0
-   */
-  int process_status(const InnoStatusPacket &pkt);
+	/*
+	 * @param context Callback context passed in inno_lidar_set_callbacks().
+	 * @param data Pointer to InnoDataPacket
+	 * @return 0
+	 */
+	int process_data(int handler, const InnoDataPacket& pkt);
 
-   /*
-    recorder lidar send inno_pc data
-   */
-  int recorder_data(int lidar_handle, void *context, enum InnoRecorderCallbackType type,
-                                      const char *buffer, int len);
+	/*
+	 * @param context Callback context passed in inno_lidar_set_callbacks().
+	 * @param status Pointer to InnoDataPacket
+	 * @return 0
+	 */
+	static int process_status(const InnoStatusPacket& pkt);
 
- private:
-  CallbackProcessor(const CallbackProcessor &) = delete;
-  CallbackProcessor &operator=(const CallbackProcessor &) = delete;
+	/*
+	 recorder lidar send inno_pc data
+	*/
+	int recorder_data(int lidar_handle, void* context, InnoRecorderCallbackType type,
+	                  const char* buffer, int len);
 
- private:
-  // Current frame idx
-  int64_t current_frame_ = -1;
-  // The number of frames received so far
-  int64_t frame_so_far_ = -1;
-  // Application stop
-  volatile bool done_ = false;
-  // Store one frame of pcd point
-  std::vector<PcdPoint> frame_data_;
+	CallbackProcessor(const CallbackProcessor&) = delete;
+	CallbackProcessor& operator=(const CallbackProcessor&) = delete;
+
+private:
+	// Current frame idx
+	int64_t current_frame_ = -1;
+	// The number of frames received so far
+	int64_t frame_so_far_ = -1;
+	// Application stop
+	volatile bool done_ = false;
+	// Store one frame of pcd point
+	std::vector<PcdPoint> frame_data_;
 };
 
-CallbackProcessor::CallbackProcessor() {
-  // reserve memory for store one frame data
-  frame_data_.reserve(kmaxPointNumberOneFrame);
+CallbackProcessor::CallbackProcessor()
+{
+	// reserve memory for store one frame data
+	frame_data_.reserve(kmaxPointNumberOneFrame);
 }
 
-void CallbackProcessor::process_message(const enum InnoMessageLevel level, const enum InnoMessageCode code,
-                                        const char *error_message) {
-  inno_log_info("level = %d code = %d\n", level, code);
+void CallbackProcessor::process_message(const InnoMessageLevel level, const InnoMessageCode code,
+                                        const char* error_message)
+{
+	inno_log_info("level = %d code = %d\n", level, code);
 
-  // process exception
-  if ((level == INNO_MESSAGE_LEVEL_INFO && code == INNO_MESSAGE_CODE_READ_FILE_END) ||
-      (level == INNO_MESSAGE_LEVEL_CRITICAL && code == INNO_MESSAGE_CODE_CANNOT_READ)) {
-    this->set_done();
-  }
+	// process exception
+	if ((level == INNO_MESSAGE_LEVEL_INFO && code == INNO_MESSAGE_CODE_READ_FILE_END) ||
+	    (level == INNO_MESSAGE_LEVEL_CRITICAL && code == INNO_MESSAGE_CODE_CANNOT_READ))
+	{
+		this->set_done();
+	}
 
-  switch (level) {
-    case INNO_MESSAGE_LEVEL_INFO:
-      inno_log_info("content = %s\n", error_message);
-      break;
-    case INNO_MESSAGE_LEVEL_WARNING:
-      inno_log_warning("content = %s\n", error_message);
-      break;
-    case INNO_MESSAGE_LEVEL_ERROR:
-      inno_log_error("content = %s\n", error_message);
-      break;
-    case INNO_MESSAGE_LEVEL_FATAL:
-      inno_log_fatal("content = %s\n", error_message);
-      break;
-    case INNO_MESSAGE_LEVEL_CRITICAL:
-      inno_log_fatal("content = %s\n", error_message);
-      break;
-    default:
-      inno_log_info("content = %s\n", error_message);
-      break;
-  }
+	switch (level)
+	{
+		case INNO_MESSAGE_LEVEL_INFO:
+			inno_log_info("content = %s\n", error_message);
+			break;
+		case INNO_MESSAGE_LEVEL_WARNING:
+			inno_log_warning("content = %s\n", error_message);
+			break;
+		case INNO_MESSAGE_LEVEL_ERROR:
+			inno_log_error("content = %s\n", error_message);
+			break;
+		case INNO_MESSAGE_LEVEL_FATAL:
+			inno_log_fatal("content = %s\n", error_message);
+			break;
+		case INNO_MESSAGE_LEVEL_CRITICAL:
+			inno_log_fatal("content = %s\n", error_message);
+			break;
+		default:
+			inno_log_info("content = %s\n", error_message);
+			break;
+	}
 }
 
-int CallbackProcessor::process_status(const InnoStatusPacket &pkt) {
-  // sanity check
-  if (!inno_lidar_check_status_packet(&pkt, 0)) {
-    inno_log_error("corrupted pkt->idx = %" PRI_SIZEU, pkt.idx);
-    return 0;
-  }
+int CallbackProcessor::process_status(const InnoStatusPacket& pkt)
+{
+	// sanity check
+	if (!inno_lidar_check_status_packet(&pkt, 0))
+	{
+		inno_log_error("corrupted pkt->idx = %" PRI_SIZEU, pkt.idx);
+		return 0;
+	}
 
-  static size_t cnt = 0;
-  if (cnt++ % 100 == 1) {
-    constexpr size_t buf_size = 2048;
-    char buf[buf_size]{0};
+	static size_t cnt = 0;
+	if (cnt++ % 100 == 1)
+	{
+		constexpr size_t buf_size = 2048;
+		char buf[buf_size]{};
 
-    int ret = inno_lidar_printf_status_packet(&pkt, buf, buf_size);
-    if (ret > 0) {
-      inno_log_info("Received status packet #%" PRI_SIZELU ": %s", cnt, buf);
-    } else {
-      inno_log_warning("Received status packet #%" PRI_SIZELU ": errorno: %d", cnt, ret);
-    }
-  }
+		if (const int ret = inno_lidar_printf_status_packet(&pkt, buf, buf_size); ret > 0)
+		{
+			inno_log_info("Received status packet #%" PRI_SIZELU ": %s", cnt, buf);
+		}
+		else
+		{
+			inno_log_warning("Received status packet #%" PRI_SIZELU ": errorno: %d", cnt, ret);
+		}
+	}
 
-  return 0;
+	return 0;
 }
 
-int CallbackProcessor::process_data(int handler, const InnoDataPacket &pkt) {
-  // iterate each point in the pkt
-  for (int i = 0; i < pkt.item_number; i++) {
-    if (pkt.type == INNO_ITEM_TYPE_XYZ_POINTCLOUD) {
-      InnoXyzPoint *point = reinterpret_cast<InnoXyzPoint *>(const_cast<char *>(pkt.payload));
-      // if want to get more information, please define your pcd_point struct and copy InnoXyzPoint data to it
-      PcdPoint pcd_point;
-      pcd_point.x = point[i].x;
-      pcd_point.y = point[i].y;
-      pcd_point.z = point[i].z;
-      pcd_point.reflectivity = point[i].refl;
-      double frame_timestamp_sec = pkt.common.ts_start_us / kUsInSecond + point[i].ts_10us / k10UsInSecond;
-      pcd_point.timestamp = frame_timestamp_sec;
-      pcd_point.facet = point[i].facet;
-      pcd_point.is_2nd_return = point[i].is_2nd_return;
-      pcd_point.multi_return = point[i].multi_return;
-      frame_data_.emplace_back(pcd_point);
-
-    } else if (CHECK_EN_XYZ_POINTCLOUD_DATA(pkt.type)) {
-      InnoEnXyzPoint *point = reinterpret_cast<InnoEnXyzPoint *>(const_cast<char *>(pkt.payload));
-      // if want to get more information, please define your PcdPoint struct and copy InnoEnXyzPoint data to it
-      PcdPoint pcd_point;
-      pcd_point.x = point[i].x;
-      pcd_point.y = point[i].y;
-      pcd_point.z = point[i].z;
-      pcd_point.reflectivity = point[i].reflectance;
-      double frame_timestamp_sec = pkt.common.ts_start_us / kUsInSecond + point[i].ts_10us / k10UsInSecond;
-      pcd_point.timestamp = frame_timestamp_sec;
-      pcd_point.facet = point[i].facet;
-      frame_data_.emplace_back(pcd_point);
-    }
-  }
-  // deliver the frame data to user and then clear the buffer
-  frame_data_.clear();
-  inno_log_info("frame idx: %" PRId64 ", total point: %u", pkt.idx, pkt.item_number);
-  return 0;
+int CallbackProcessor::process_data(int, const InnoDataPacket& pkt)
+{
+	// iterate each point in the pkt
+	for (int i = 0; i < pkt.item_number; i++)
+	{
+		if (pkt.type == INNO_ITEM_TYPE_XYZ_POINTCLOUD)
+		{
+# if defined(_MSC_VER)
+			//InnoXyzPoint* point = reinterpret_cast<InnoXyzPoint*>(const_cast<char*>(pkt.payload));
+#else
+			const InnoXyzPoint* point = pkt.xyz_points;
+#endif
+			// if want to get more information, please define your pcd_point struct and copy InnoXyzPoint data to it
+			PcdPoint pcd_point;
+			pcd_point.x = point[i].x;
+			pcd_point.y = point[i].y;
+			pcd_point.z = point[i].z;
+			pcd_point.reflectivity = point[i].refl;
+			double frame_timestamp_sec = pkt.common.ts_start_us / kUsInSecond + point[i].ts_10us / k10UsInSecond;
+			pcd_point.timestamp = frame_timestamp_sec;
+			pcd_point.facet = point[i].facet;
+			pcd_point.is_2nd_return = point[i].is_2nd_return;
+			pcd_point.multi_return = point[i].multi_return;
+			frame_data_.emplace_back(pcd_point);
+		}
+		else if (CHECK_EN_XYZ_POINTCLOUD_DATA(pkt.type))
+		{
+# if defined(_MSC_VER)
+			InnoEnXyzPoint* point = reinterpret_cast<InnoEnXyzPoint*>(const_cast<char*>(pkt.payload));
+#else
+			const InnoEnXyzPoint* point = pkt.en_xyz_points;
+#endif
+			// if want to get more information, please define your PcdPoint struct and copy InnoEnXyzPoint data to it
+			PcdPoint pcd_point;
+			pcd_point.x = point[i].x;
+			pcd_point.y = point[i].y;
+			pcd_point.z = point[i].z;
+			pcd_point.reflectivity = point[i].reflectance;
+			double frame_timestamp_sec = pkt.common.ts_start_us / kUsInSecond + point[i].ts_10us / k10UsInSecond;
+			pcd_point.timestamp = frame_timestamp_sec;
+			pcd_point.facet = point[i].facet;
+			frame_data_.emplace_back(pcd_point);
+		}
+	}
+	// deliver the frame data to user and then clear the buffer
+	frame_data_.clear();
+	inno_log_info("frame idx: %" PRId64 ", total point: %u", pkt.idx, pkt.item_number);
+	return 0;
 }
 
-int CallbackProcessor::recorder_data(int lidar_handle, void *context, enum InnoRecorderCallbackType type,
-                                    const char *buffer, int len) {
-  InnoDataPacket *pkt = reinterpret_cast<InnoDataPacket *>(const_cast<char *>(buffer));
-  // inno_log_info("recorder_data type %d len %d sub_seq %u", type, len, pkt->sub_seq);
-  if (CHECK_CO_SPHERE_POINTCLOUD_DATA(pkt->type)) {
-    // CO_SPHERE_POINTCLOUD_DATA Need write anghv table to the file header
-  }
-  return 0;
+int CallbackProcessor::recorder_data(int lidar_handle, void* context, enum InnoRecorderCallbackType type,
+                                     const char* buffer, int len)
+{
+	InnoDataPacket* pkt = reinterpret_cast<InnoDataPacket*>(const_cast<char*>(buffer));
+	// inno_log_info("recorder_data type %d len %d sub_seq %u", type, len, pkt->sub_seq);
+	if (CHECK_CO_SPHERE_POINTCLOUD_DATA(pkt->type))
+	{
+		// CO_SPHERE_POINTCLOUD_DATA Need write anghv table to the file header
+	}
+	return 0;
 }
 
-void usage(const char *arg0) {
-  inno_fprintf(2,
-               "\n"
-               "Examples:\n"
-               " record frames from live LIDAR via UDP.\n"
-               "   %s --lidar-ip 172.168.1.10 --lidar-udp-port 8010 \n\n",
-               arg0);
-  return;
+void usage(const char* arg0)
+{
+	inno_fprintf(2,
+	             "\n"
+	             "Examples:\n"
+	             " record frames from live LIDAR via UDP.\n"
+	             "   %s --lidar-ip 172.168.1.10 --lidar-udp-port 8010 \n\n",
+	             arg0);
+	return;
 }
 
 //
 // parse command
 //
-void parse_command(int argc, char **argv, LidarOption *lidar_option) {
-  // getopt_long stores the option index here.
-  int c;
-  struct option long_options[] = {// These options set a flag.
-                                  {"lidar-ip", required_argument, 0, 'n'},
-                                  {"lidar-udp-port", required_argument, 0, 'u'},
-                                  {0, 0, 0, 0}};
+void parse_command(int argc, char** argv, LidarOption* lidar_option)
+{
+	// getopt_long stores the option index here.
+	int c;
+	struct option long_options[] = {
+			// These options set a flag.
+			{"lidar-ip", required_argument, 0, 'n'},
+			{"lidar-udp-port", required_argument, 0, 'u'},
+			{0, 0, 0, 0}};
 
-  const char *optstring = "n:u:i:h";
-  while (1) {
-    int option_index = 0;
-    c = getopt_long(argc, argv, optstring, long_options, &option_index);
+	const char* optstring = "n:u:i:h";
+	while (1)
+	{
+		int option_index = 0;
+		c = getopt_long(argc, argv, optstring, long_options, &option_index);
 
-    /* Detect the end of the options. */
-    if (c == -1) {
-      break;
-    }
+		/* Detect the end of the options. */
+		if (c == -1)
+		{
+			break;
+		}
 
-    switch (c) {
-      case 0:
-        // If this option set a flag, do nothing else now.
-        if (long_options[option_index].flag != 0) {
-          break;
-        }
-        inno_log_verify(optarg == NULL, "option %s with arg %s", long_options[option_index].name, optarg);
-        break;
+		switch (c)
+		{
+			case 0:
+				// If this option set a flag, do nothing else now.
+				if (long_options[option_index].flag != 0)
+				{
+					break;
+				}
+				inno_log_verify(optarg == NULL, "option %s with arg %s", long_options[option_index].name, optarg);
+				break;
 
-      // lidar live open
-      case 'n':
-        lidar_option->lidar_ip = optarg;
-        break;
+			// lidar live open
+			case 'n':
+				lidar_option->lidar_ip = optarg;
+				break;
 
-      case 'u':
-        lidar_option->lidar_udp_port = strtoul(optarg, NULL, 0);
-        break;
+			case 'u':
+				lidar_option->lidar_udp_port = strtoul(optarg, NULL, 0);
+				break;
 
-      // other
-      case 'h':
-        usage(argv[0]);
-        exit(0);
-        break;
+			// other
+			case 'h':
+				usage(argv[0]);
+				exit(0);
+				break;
 
-      case '?':
-        abort();
+			case '?':
+				abort();
 
-      default:
-        inno_log_error("unknown options %c\n", c);
-        usage(argv[0]);
-        exit(1);
-    }
-  }
+			default:
+				inno_log_error("unknown options %c\n", c);
+				usage(argv[0]);
+				exit(1);
+		}
+	}
 }
 
-int main(int argc, char **argv) {
-  if (argc == 1) {
-    usage(argv[0]);
-    exit(0);
-  }
-  inno_log_info("inno_api_version %s", inno_api_version());
-  inno_log_info("inno_api_build_tag %s", inno_api_build_tag());
-  inno_log_info("inno_api_build_time %s", inno_api_build_time());
+int main(int argc, char** argv)
+{
+	if (argc == 1)
+	{
+		usage(argv[0]);
+		exit(0);
+	}
+	inno_log_info("inno_api_version %s", inno_api_version());
+	inno_log_info("inno_api_build_tag %s", inno_api_build_tag());
+	inno_log_info("inno_api_build_time %s", inno_api_build_time());
 
-  // Set log printing level
-  inno_lidar_set_log_level(INNO_LOG_LEVEL_INFO);
-  inno_lidar_log_callback(
-      [](void *ctx, enum InnoLogLevel level, const char *header1, const char *header2, const char *msg) {
-        // application log callback and store the log to file
-        // printf("%d %s %s %s\n", level, header1, header2, msg);
-      },
-      NULL);
-  // Parse command parameters
-  LidarOption lidar_option;
-  parse_command(argc, argv, &lidar_option);
+	std::signal(SIGINT, signalHandler);
+	// Set log printing level
+	inno_lidar_set_log_level(INNO_LOG_LEVEL_INFO);
+	inno_lidar_log_callback(
+			[](void* ctx, enum InnoLogLevel level, const char* header1, const char* header2, const char* msg)
+			{
+				// application log callback and store the log to file
+				// printf("%d %s %s %s\n", level, header1, header2, msg);
+			},
+			NULL);
+	// Parse command parameters
+	LidarOption lidar_option;
+	parse_command(argc, argv, &lidar_option);
 
-  // Create processing class
-  CallbackProcessor processor;
+	// Create processing class
+	CallbackProcessor processor;
 
-  int handle;
+	int handle;
 
-  handle = inno_lidar_open_live("live",  // name of lidar instance
-                                lidar_option.lidar_ip.c_str(), lidar_option.lidar_port, INNO_LIDAR_PROTOCOL_PCS_UDP,
-                                lidar_option.lidar_udp_port);
+	handle = inno_lidar_open_live("live",// name of lidar instance
+	                              lidar_option.lidar_ip.c_str(), lidar_option.lidar_port, INNO_LIDAR_PROTOCOL_PCS_UDP,
+	                              lidar_option.lidar_udp_port);
 
-  // set SDK to callback with XYZ FRAME
-  inno_lidar_set_callbacks_data_type(handle, INNO_CALLBACK_XYZ_FRAME);
+	// set SDK to callback with XYZ FRAME
+	inno_lidar_set_callbacks_data_type(handle, INNO_CALLBACK_XYZ_FRAME);
 
-  // if need vehicle coordinate, force call the follow function
-  // inno_lidar_set_attribute_string(handle, "force_vehicle_coordinate", "1");
-  inno_log_verify(handle > 0, "cannot open lidar");
+	// if need vehicle coordinate, force call the follow function
+	// inno_lidar_set_attribute_string(handle, "force_vehicle_coordinate", "1");
+	inno_log_verify(handle > 0, "cannot open lidar");
 
-  int ret = inno_lidar_set_callbacks(
-    handle,
+	int ret = inno_lidar_set_callbacks(
+			handle,
 
-    // message callback, receive lidar runtime debugging / error messages
-    [](const int lidar_handle, void *ctx, const uint32_t from_remote, const enum InnoMessageLevel level,
-       const enum InnoMessageCode code, const char *error_message) {
-      return reinterpret_cast<CallbackProcessor *>(ctx)->process_message(level, code, error_message);
-    },
+			// message callback, receive lidar runtime debugging / error messages
+			[](const int lidar_handle, void* ctx, const uint32_t from_remote, const enum InnoMessageLevel level,
+			   const enum InnoMessageCode code, const char* error_message)
+			{
+				return reinterpret_cast<CallbackProcessor*>(ctx)->process_message(level, code, error_message);
+			},
 
-    // data callback, receiving point cloud data
-    [](const int lidar_handle, void *ctx, const InnoDataPacket *pkt) -> int {
-      inno_log_verify(pkt, "pkt");
-      return reinterpret_cast<CallbackProcessor *>(ctx)->process_data(lidar_handle, *pkt);
-    },
+			// data callback, receiving point cloud data
+			[](const int lidar_handle, void* ctx, const InnoDataPacket* pkt) -> int
+			{
+				inno_log_verify(pkt, "pkt");
+				return reinterpret_cast<CallbackProcessor*>(ctx)->process_data(lidar_handle, *pkt);
+			},
 
-    // status callback, receive radar operation status information
-    [](const int lidar_handle, void *ctx, const InnoStatusPacket *pkt) -> int {
-      inno_log_verify(pkt, "pkt");
-      return reinterpret_cast<CallbackProcessor *>(ctx)->process_status(*pkt);
-    },
+			// status callback, receive radar operation status information
+			[](const int lidar_handle, void* ctx, const InnoStatusPacket* pkt) -> int
+			{
+				inno_log_verify(pkt, "pkt");
+				return reinterpret_cast<CallbackProcessor*>(ctx)->process_status(*pkt);
+			},
 
-    // use default get_host_time()
-    NULL, &processor);
+			// use default get_host_time()
+			NULL, &processor);
 
-  inno_log_verify(ret == 0, "set_callbacks failed %d", ret);
+	inno_log_verify(ret == 0, "set_callbacks failed %d", ret);
 
- // if need  async reocde inno_pc, please reister the follow callback otherwise unnecessary to set recorder callback
-  // inno_lidar_set_recorder_callback(
-  //     handle, InnoRecorderCallbackType::INNO_RECORDER_CALLBACK_TYPE_INNO_PC,
-  //     [](int lidar_handle, void *context, enum InnoRecorderCallbackType type, const char *buffer, int len) {
-  //       return reinterpret_cast<CallbackProcessor *>(context)->recorder_data(lidar_handle, context, type, buffer, len);
-  //     },
-  //     &processor);
+	// if need  async reocde inno_pc, please reister the follow callback otherwise unnecessary to set recorder callback
+	// inno_lidar_set_recorder_callback(
+	//     handle, InnoRecorderCallbackType::INNO_RECORDER_CALLBACK_TYPE_INNO_PC,
+	//     [](int lidar_handle, void *context, enum InnoRecorderCallbackType type, const char *buffer, int len) {
+	//       return reinterpret_cast<CallbackProcessor *>(context)->recorder_data(lidar_handle, context, type, buffer, len);
+	//     },
+	//     &processor);
 
-  ret = inno_lidar_start(handle);
-  inno_log_verify(ret == 0, "start failed %d", ret);
+	ret = inno_lidar_start(handle);
+	inno_log_verify(ret == 0, "start failed %d", ret);
 
-  // Blocking waiting for operation completion
-  while (!processor.is_done()) {
-    std::this_thread::sleep_for(std::chrono::milliseconds(10));
-  }
+	// Blocking waiting for operation completion
+	while (!processor.is_done())
+	{
+		std::this_thread::sleep_for(std::chrono::milliseconds(10));
+		if (stopped)
+		{
+			processor.set_done();
+		}
+	}
 
-  ret = inno_lidar_stop(handle);
-  inno_log_verify(ret == 0, "stop failed %d", ret);
+	ret = inno_lidar_stop(handle);
+	inno_log_verify(ret == 0, "stop failed %d", ret);
 
-  ret = inno_lidar_close(handle);
-  inno_log_verify(ret == 0, "close failed %d", ret);
+	ret = inno_lidar_close(handle);
+	inno_log_verify(ret == 0, "close failed %d", ret);
 
-  return 0;
+	return 0;
 }
