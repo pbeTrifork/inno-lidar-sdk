@@ -36,10 +36,10 @@
 #include <thread>
 #include <vector>
 
-#include "src/sdk_common/inno_lidar_api.h"
-#include "src/sdk_common/inno_lidar_other_api.h"
-#include "src/sdk_common/inno_lidar_packet_utils.h"
-#include "src/utils/inno_lidar_log.h"
+#include "sdk_common/inno_lidar_api.h"
+#include "sdk_common/inno_lidar_other_api.h"
+#include "sdk_common/inno_lidar_packet_utils.h"
+#include "utils/inno_lidar_log.h"
 #if !defined(__MINGW64__) && defined(_WIN32)
 #include <io.h>
 #include <stdarg.h>

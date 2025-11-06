@@ -31,13 +31,13 @@
 #include <string>
 #include <thread>
 
-#include "src/sdk_common/converter/rosbag_recorder.h"
-#include "src/sdk_common/inno_lidar_api.h"
-#include "src/sdk_common/inno_lidar_other_api.h"
-#include "src/sdk_common/inno_lidar_packet_utils.h"
-#include "src/sdk_common/ring_id_converter_interface.h"
-#include "src/utils/inno_lidar_log.h"
-#include "src/utils/utils.h"
+#include "sdk_common/converter/rosbag_recorder.h"
+#include "sdk_common/inno_lidar_api.h"
+#include "sdk_common/inno_lidar_other_api.h"
+#include "sdk_common/inno_lidar_packet_utils.h"
+#include "sdk_common/ring_id_converter_interface.h"
+#include "utils/inno_lidar_log.h"
+#include "utils/utils.h"
 
 static const double kUsInSecond = 1000000.0;
 static const double k10UsInSecond = 100000.0;
