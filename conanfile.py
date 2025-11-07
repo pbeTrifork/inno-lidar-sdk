@@ -21,8 +21,18 @@ class innoClientSDK(ConanFile):
 	topics = ("LiDAR", "SDK", "Falcon")
 
 	settings = "os", "compiler", "build_type", "arch"
-	options = {"shared": [True, False]}
-	default_options = {"shared": False}
+	options = {"shared": [True, False], "fPIC": [True, False]}
+	default_options = {"shared": False, "fPIC": True}
+
+	exports_sources = "CMakeLists.txt", "src/*", "SDK_VERSION", "inno-client-config.cmake.in"
+
+	def config_options(self):
+		if self.settings.os == "Windows":
+			del self.options.fPIC
+
+	def configure(self):
+		if self.options.shared:
+			self.options.rm_safe("fPIC")
 
 	def set_version(self):
 		content = load(self, "SDK_VERSION")
@@ -37,13 +47,18 @@ class innoClientSDK(ConanFile):
 
 	def build(self):
 		cmake = CMake(self)
+		# the MAKE_SHARED option is really badly named, should be ONLY_LIBS
 		cmake.configure(variables={"MAKE_SHARED":"ON"})
 		cmake.build()
 
 	def package(self):
 		copy(self, "*.h", os.path.join(self.source_folder, "src"), os.path.join(self.package_folder, "include"))
-		copy(self, "*.so", self.build_folder, os.path.join(self.package_folder, "lib"), keep_path=False)
-		copy(self, "*.a", self.build_folder, os.path.join(self.package_folder, "lib"), keep_path=False)
+		copy(self, "*.so*",    self.build_folder, os.path.join(self.package_folder, "lib"), keep_path=False)
+		copy(self, "*.a",     self.build_folder, os.path.join(self.package_folder, "lib"), keep_path=False)
+		copy(self, "*.lib",   self.build_folder, os.path.join(self.package_folder, "lib"), keep_path=False)
+		copy(self, "*.dylib", self.build_folder, os.path.join(self.package_folder, "lib"), keep_path=False)
+		copy(self, "*.dll", self.build_folder, os.path.join(self.package_folder, "bin"), keep_path=False)
+		copy(self, "LICENSE", self.source_folder, os.path.join(self.package_folder, "licenses"))
 
 	def package_info(self):
 		self.cpp_info.libs = ["inno_client_sdk"]
