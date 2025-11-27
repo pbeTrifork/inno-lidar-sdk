@@ -229,7 +229,7 @@ int CallbackProcessor::process_data(int, const InnoDataPacket& pkt)
 			const InnoXyzPoint* point = pkt.xyz_points;
 #endif
 			// if want to get more information, please define your pcd_point struct and copy InnoXyzPoint data to it
-			PcdPoint pcd_point;
+			PcdPoint pcd_point{};
 			pcd_point.x = point[i].x;
 			pcd_point.y = point[i].y;
 			pcd_point.z = point[i].z;
@@ -248,8 +248,8 @@ int CallbackProcessor::process_data(int, const InnoDataPacket& pkt)
 #else
 			const InnoEnXyzPoint* point = pkt.en_xyz_points;
 #endif
-			// if want to get more information, please define your PcdPoint struct and copy InnoEnXyzPoint data to it
-			PcdPoint pcd_point;
+			// if we want to get more information, please define your PcdPoint struct and copy InnoEnXyzPoint data to it
+			PcdPoint pcd_point{};
 			pcd_point.x = point[i].x;
 			pcd_point.y = point[i].y;
 			pcd_point.z = point[i].z;
@@ -266,12 +266,12 @@ int CallbackProcessor::process_data(int, const InnoDataPacket& pkt)
 	return 0;
 }
 
-int CallbackProcessor::recorder_data(int lidar_handle, void* context, enum InnoRecorderCallbackType type,
-                                     const char* buffer, int len)
+int CallbackProcessor::recorder_data(int /*lidar_handle*/, void* /*context*/, enum InnoRecorderCallbackType /*type*/,
+                                     const char* buffer, int /*len*/)
 {
-	InnoDataPacket* pkt = reinterpret_cast<InnoDataPacket*>(const_cast<char*>(buffer));
 	// inno_log_info("recorder_data type %d len %d sub_seq %u", type, len, pkt->sub_seq);
-	if (CHECK_CO_SPHERE_POINTCLOUD_DATA(pkt->type))
+	if (const auto* pkt = reinterpret_cast<InnoDataPacket*>(const_cast<char*>(buffer));
+		CHECK_CO_SPHERE_POINTCLOUD_DATA(pkt->type))
 	{
 		// CO_SPHERE_POINTCLOUD_DATA Need write anghv table to the file header
 	}
@@ -286,7 +286,6 @@ void usage(const char* arg0)
 	             " record frames from live LIDAR via UDP.\n"
 	             "   %s --lidar-ip 172.168.1.10 --lidar-udp-port 8010 \n\n",
 	             arg0);
-	return;
 }
 
 //
@@ -295,18 +294,17 @@ void usage(const char* arg0)
 void parse_command(int argc, char** argv, LidarOption* lidar_option)
 {
 	// getopt_long stores the option index here.
-	int c;
-	struct option long_options[] = {
+	constexpr option long_options[] = {
 			// These options set a flag.
-			{"lidar-ip", required_argument, 0, 'n'},
-			{"lidar-udp-port", required_argument, 0, 'u'},
-			{0, 0, 0, 0}};
+			{"lidar-ip", required_argument, nullptr, 'n'},
+			{"lidar-udp-port", required_argument, nullptr, 'u'},
+			{nullptr, 0, nullptr, 0}};
 
-	const char* optstring = "n:u:i:h";
-	while (1)
+	while (true)
 	{
+		const char* optstring = "n:u:i:h";
 		int option_index = 0;
-		c = getopt_long(argc, argv, optstring, long_options, &option_index);
+		const int c = getopt_long(argc, argv, optstring, long_options, &option_index);
 
 		/* Detect the end of the options. */
 		if (c == -1)
@@ -322,7 +320,7 @@ void parse_command(int argc, char** argv, LidarOption* lidar_option)
 				{
 					break;
 				}
-				inno_log_verify(optarg == NULL, "option %s with arg %s", long_options[option_index].name, optarg);
+				inno_log_verify(optarg == nullptr, "option %s with arg %s", long_options[option_index].name, optarg);
 				break;
 
 			// lidar live open
@@ -331,7 +329,7 @@ void parse_command(int argc, char** argv, LidarOption* lidar_option)
 				break;
 
 			case 'u':
-				lidar_option->lidar_udp_port = strtoul(optarg, NULL, 0);
+				lidar_option->lidar_udp_port = strtoul(optarg, nullptr, 0);
 				break;
 
 			// other
@@ -366,12 +364,12 @@ int main(int argc, char** argv)
 	// Set log printing level
 	inno_lidar_set_log_level(INNO_LOG_LEVEL_INFO);
 	inno_lidar_log_callback(
-			[](void* ctx, enum InnoLogLevel level, const char* header1, const char* header2, const char* msg)
+			[](void* ctx, InnoLogLevel /*level*/, const char* /*header1*/, const char* /*header2*/, const char* /*msg*/)
 			{
 				// application log callback and store the log to file
 				// printf("%d %s %s %s\n", level, header1, header2, msg);
 			},
-			NULL);
+			nullptr);
 	// Parse command parameters
 	LidarOption lidar_option;
 	parse_command(argc, argv, &lidar_option);
@@ -379,11 +377,10 @@ int main(int argc, char** argv)
 	// Create processing class
 	CallbackProcessor processor;
 
-	int handle;
-
-	handle = inno_lidar_open_live("live",// name of lidar instance
-	                              lidar_option.lidar_ip.c_str(), lidar_option.lidar_port, INNO_LIDAR_PROTOCOL_PCS_UDP,
-	                              lidar_option.lidar_udp_port);
+	int handle = inno_lidar_open_live("live", // name of lidar instance
+	                                  lidar_option.lidar_ip.c_str(), lidar_option.lidar_port,
+	                                  INNO_LIDAR_PROTOCOL_PCS_UDP,
+	                                  lidar_option.lidar_udp_port);
 
 	// set SDK to callback with XYZ FRAME
 	inno_lidar_set_callbacks_data_type(handle, INNO_CALLBACK_XYZ_FRAME);
@@ -399,25 +396,25 @@ int main(int argc, char** argv)
 			[](const int lidar_handle, void* ctx, const uint32_t from_remote, const enum InnoMessageLevel level,
 			   const enum InnoMessageCode code, const char* error_message)
 			{
-				return reinterpret_cast<CallbackProcessor*>(ctx)->process_message(level, code, error_message);
+				return static_cast<CallbackProcessor*>(ctx)->process_message(level, code, error_message);
 			},
 
 			// data callback, receiving point cloud data
 			[](const int lidar_handle, void* ctx, const InnoDataPacket* pkt) -> int
 			{
 				inno_log_verify(pkt, "pkt");
-				return reinterpret_cast<CallbackProcessor*>(ctx)->process_data(lidar_handle, *pkt);
+				return static_cast<CallbackProcessor*>(ctx)->process_data(lidar_handle, *pkt);
 			},
 
 			// status callback, receive radar operation status information
 			[](const int lidar_handle, void* ctx, const InnoStatusPacket* pkt) -> int
 			{
 				inno_log_verify(pkt, "pkt");
-				return reinterpret_cast<CallbackProcessor*>(ctx)->process_status(*pkt);
+				return CallbackProcessor::process_status(*pkt);
 			},
 
 			// use default get_host_time()
-			NULL, &processor);
+			nullptr, &processor);
 
 	inno_log_verify(ret == 0, "set_callbacks failed %d", ret);
 
